@@ -11,7 +11,7 @@ class Car:
 
         self.width = 4.572
         self.height = 1.8
-        self.theor_max_speed = 63 # m/s, max speed WITHOUT friction
+        self.theor_max_speed = 65 # m/s, max speed WITHOUT friction
         self.zero_to_60 = 7 # 0-60 in mph
         #self.acceleration_coeff = 26.8 / (self.zero_to_60 * self.theor_max_speed - 26.8 * self.zero_to_60)
         self.acceleration_coeff = -np.log(1 - 26.8/self.theor_max_speed)/self.zero_to_60
@@ -26,7 +26,7 @@ class Car:
         carFixtureDef = Box2D.b2FixtureDef()
         carFixtureDef.shape = carShape
         carFixtureDef.density = 1
-        carFixtureDef.friction = 0.1
+        carFixtureDef.friction = 0
         self.body.CreateFixture(carFixtureDef)
 
         self.body.massData.center.x = self.width / 5
@@ -63,13 +63,13 @@ class Car:
         front_tire_pos = self.get_front_tires_pos()
         front_tire_dir = self.get_front_tire_dir()
         apply_linear_friction(front_tire_pos, front_tire_dir, 0.1)
-        apply_lateral_friction(front_tire_pos, front_tire_dir, 100)
+        apply_lateral_friction(front_tire_pos, front_tire_dir, 60)
         apply_brakes(front_tire_pos, front_tire_dir, self.brake * 60)
 
         back_tire_pos = self.get_back_tires_pos()
         back_tire_dir = self.get_car_direction()
         apply_linear_friction(back_tire_pos, back_tire_dir, 0.1)
-        apply_lateral_friction(back_tire_pos, back_tire_dir, 100)
+        apply_lateral_friction(back_tire_pos, back_tire_dir, 60)
         apply_brakes(back_tire_pos, back_tire_dir, self.brake * 60)
 
         a = self.acceleration_coeff

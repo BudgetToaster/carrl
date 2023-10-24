@@ -1,12 +1,13 @@
+import itertools
 import random
 import time
 
 import Box2D
 from Box2D import b2Vec2
 import numpy as np
-import pyglet
-from pyglet import shapes
+import pygame
 from world.car import Car
+import map_processor
 
 
 class World(Box2D.b2ContactListener):
@@ -14,7 +15,8 @@ class World(Box2D.b2ContactListener):
         super().__init__()
         self.b2world = Box2D.b2World((0, 0))
         self.vehicles = []
-        self.obstacles = []
+        self.buildings = []
+        self.edges = []
         self.b2world.contactListener = self
         self.zoom = 3
 
@@ -38,8 +40,28 @@ class World(Box2D.b2ContactListener):
         buildFixtureDef = Box2D.b2FixtureDef()
         buildFixtureDef.shape = buildShape
         build.CreateFixture(buildFixtureDef)
-        self.obstacles.append(build)
+        self.buildings.append(build)
         return build
+
+    def add_edges(self, vertices, scale, shift_x, shift_y):
+        if len(vertices) == 0:
+            return
+        if isinstance(vertices[0], list):
+            vertices = itertools.chain(*vertices)
+        for e in vertices:
+            e0 = (e[0][0] * scale + shift_x, e[0][1] * scale + shift_y)
+            e1 = (e[1][0] * scale + shift_x, e[1][1] * scale + shift_y)
+            e = (e0, e1)
+
+            buildDef = Box2D.b2BodyDef()
+            buildDef.type = Box2D.b2_staticBody
+            edge = self.b2world.CreateBody(buildDef)
+            buildShape = Box2D.b2EdgeShape()
+            buildShape.vertices = e
+            buildFixtureDef = Box2D.b2FixtureDef()
+            buildFixtureDef.shape = buildShape
+            edge.CreateFixture(buildFixtureDef)
+            self.edges.append(edge)
 
     def update(self, timestep):
         for veh in self.vehicles:
@@ -53,33 +75,40 @@ class World(Box2D.b2ContactListener):
         self.vehicles = list(filter(lambda x: not x.dead, self.vehicles))
 
     def draw(self, window):
-        batch = pyglet.graphics.Batch()
+        canvas = pygame.Surface((window.get_width(), window.get_height()))
 
         scale = self.zoom
         if len(self.vehicles) > 0:
-            x_shift = window.width / 2 - self.vehicles[0].body.position.x * scale
-            y_shift = window.height / 2 - self.vehicles[0].body.position.y * scale
+            x_shift = window.get_width() / 2 - self.vehicles[0].body.position.x * scale
+            y_shift = window.get_height() / 2 - self.vehicles[0].body.position.y * scale
         else:
-            x_shift = window.width / 2
-            y_shift = window.height / 2
+            x_shift = window.get_width() / 2
+            y_shift = window.get_height() / 2
 
         drawn = []
 
         for item in self.vehicles:
             vertices = item.get_vertices()
             vertices = [(p.x * scale + x_shift, p.y * scale + y_shift) for p in vertices]
-            drawn.append(pyglet.shapes.Polygon(
-                *vertices,
-                color=(50, 50, 255), batch=batch))
-        for item in self.obstacles:
+            drawn.append(pygame.draw.polygon(
+                canvas,
+                (50, 50, 255),
+                vertices))
+        for item in self.edges:
             vertices = item.fixtures[0].shape.vertices
             vertices = [(item.GetWorldPoint(b2Vec2(x, y))) for x, y in vertices]
             vertices = [(p.x * scale + x_shift, p.y * scale + y_shift) for p in vertices]
-            drawn.append(pyglet.shapes.Polygon(
-                *vertices,
-                color=(255, 0, 0), batch=batch))
+            if (0 <= vertices[0][0] <= window.get_width() and 0 <= vertices[0][1] <= window.get_height()) or \
+                    (0 <= vertices[1][0] <= window.get_width() and 0 <= vertices[1][1] <= window.get_height()):
+                drawn.append(pygame.draw.line(
+                    canvas, (255, 0, 0),
+                    (vertices[0][0], vertices[0][1]),
+                    (vertices[1][0], vertices[1][1])))
 
-        batch.draw()
+        canvas = pygame.transform.flip(canvas, False, True)
+        window.blit(canvas, canvas.get_rect())
+        pygame.event.pump()
+        pygame.display.update()
 
     def cast_ray(self, source, pos, dir, range):
         p1 = b2Vec2(*pos)
@@ -100,7 +129,7 @@ class World(Box2D.b2ContactListener):
         return out
 
     def get_vision(self, car, points):
-        out = np.ones(points) * float('inf')
+        out = np.ones(points)
         pos = (car.body.position.x, car.body.position.y)
         for i in range(points):
             angle_shift = i / points * np.pi * 2
@@ -111,8 +140,9 @@ class World(Box2D.b2ContactListener):
                 100
             )
             if cast is None:
-                continue
-            dist = (Box2D.b2Vec2(*cast) - car.body.position).length
+                dist = np.inf
+            else:
+                dist = (Box2D.b2Vec2(*cast) - car.body.position).length
             out[i] = 1 / (dist + 1)
         return out
 
@@ -124,53 +154,43 @@ class World(Box2D.b2ContactListener):
 
 
 def main():
-    window = pyglet.window.Window(640, 480)
-    keys = pyglet.window.key.KeyStateHandler()
-    window.push_handlers(keys)
+    pygame.init()
+    pygame.display.init()
+    window = pygame.display.set_mode((640, 480))
 
     world = World(1)
-    n = 5
-    s = 100
-    for x in range(-n, n+1):
-        shift = random.random() * 100 - 50
-        for y in range(-n, n+1):
-            lanes = 2
-            ix = x * s
-            iy = y * s
-            world.make_building(ix + 3.65 / 2 * lanes,
-                                iy + 3.65 / 2 * lanes + shift,
-                                ix + s - 3.65 / 2 * lanes,
-                                iy + s - 3.65 / 2 * lanes + shift)
 
-    @window.event
-    def on_mouse_scroll(x, y, scroll_x, scroll_y):
-        if scroll_y > 0:
-            world.zoom *= 1.2
-        elif scroll_y < 0:
-            world.zoom /= 1.2
+    edges = map_processor.to_edges('../squiggle.png')
+    vertices = map_processor.edges_img_to_vertices(edges)
+    vertices = map_processor.cut_corners(vertices, 20)
+    world.add_edges(vertices, 0.7, -1220 * 0.7, -1000 * 0.7)
 
     last_tick = time.time()
     start = time.time()
-    @window.event
-    def on_draw():
-        nonlocal last_tick, start
-        window.clear()
-        world.draw(window)
-        if keys[pyglet.window.key.A]:
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.MOUSEWHEEL:
+                if event.y > 0:
+                    world.zoom *= 1.2
+                elif event.y < 0:
+                    world.zoom /= 1.2
+
+        pressed = pygame.key.get_pressed()
+        if pressed[pygame.K_a]:
             turnangle = np.pi / 8
-        elif keys[pyglet.window.key.D]:
+        elif pressed[pygame.K_d]:
             turnangle = -np.pi / 8
         else:
             turnangle = 0
 
-        if keys[pyglet.window.key.W]:
+        if pressed[pygame.K_w]:
             throttle = 1
-        elif keys[pyglet.window.key.S]:
+        elif pressed[pygame.K_s]:
             throttle = -1
         else:
             throttle = 0
 
-        if keys[pyglet.window.key.LCTRL]:
+        if pressed[pygame.K_LCTRL]:
             brake = 1
         else:
             brake = 0
@@ -185,9 +205,8 @@ def main():
 
         now = time.time()
         world.update(now - last_tick)
+        world.draw(window)
         last_tick = now
-
-    pyglet.app.run()
 
 
 if __name__ == '__main__':
